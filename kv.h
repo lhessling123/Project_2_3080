@@ -26,19 +26,17 @@
 
 /* -------- Your types go here -------------------------------------------- */
 
-typedef struct Entry{
-    char *key;
-    int value;
-    struct Entry* next;
-} Entry;
+//I am predefining the arrays but could change for better memory management
+typedef struct kv_entry {
+    char key[MAX_KEY_LEN];
+    char value[MAX_VAL_LEN];
+    struct kv_entry *next;
+} kv_entry_t;
 
-typedef struct HashTable {
-    int size;
-    int count;
-    Entry** buckets;
-} HashTable;
-
-
+typedef struct kv_table {
+    int num_buckets;
+    kv_entry_t **buckets;
+} kv_table_t
 
 /*
  * TODO (Stage 1): Define your hash-table entry and bucket types.
@@ -56,11 +54,17 @@ typedef struct HashTable {
 /* Protocol / connection handling (Stage 1) */
 void handle_client(int conn_fd);        /* loop: read line, parse, reply */
 
+
 /* Hash-table operations (Stage 1, made thread-safe in Stage 3) */
 /*   Return 0 on success, -1 on not-found / error. */
 /*   You design the full signatures -- these are just suggestions. */
 /* int  kv_get(const char *key, char *out_val, size_t out_cap); */
 /* int  kv_put(const char *key, const char *val, int ttl_seconds); */
 /* int  kv_del(const char *key); */
+
+kv_table_t *kv_init(int num_buckets);
+int kv_get(kv_table_t *table, const char *key, char *out_val);
+int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds);
+int kv_del(kv_table_t *table, const char *key);
 
 #endif /* KV_H */
