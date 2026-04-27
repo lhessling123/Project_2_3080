@@ -78,6 +78,82 @@ static void usage(const char *prog) {
         prog);
 }
 
+void handle_client(int conn_fd, kv_table_t *table){
+    char line[MAX_LINE_LEN];
+    FILE *in = fdopen(conn_fd, "r");
+    FILE *out = fdopen(dup(conn_fd), "w");
+
+    if(!in || !out){
+        if (in) fclose(in);
+        if (out) fclose(out);
+        return;
+    }
+    
+    while (fgets(line, sizeof(line), in)){
+        char cmd[16], key[MAX_KEY_LEN], val[MAX_VAL_LEN];
+        int ttl = 0;
+
+        int parsed = sscanf(line, "%15s %255s %255s %d", cmd, key, val, &ttl);
+        if (parsed < 1) continue;
+
+        if (strcmp(cmd, "QUIT") == 0){
+            fprintf(out, RESP_BYE);
+            break;
+        } else if (strcmp(cmd, "GET") == 0){
+
+        } else if (strcmp(cmd, "PUT") == 0){
+
+        } else if (strcmp(cmd, "DEL") == 0){
+
+        } else {
+            fprintf(out, "ERR unknown command\n");
+        }
+
+        fflush(out);
+    }
+
+    fclose(in);
+    fclose(out);
+}
+
+kv_table_t *kv_init(int num_buckets){
+    kv_table_t *return_table = malloc(sizeof(kv_table_t));
+    return_table->num_buckets = num_buckets;
+    return_table->buckets = calloc(num_buckets, sizeof(kv_entry_t *));
+    return return_table;
+}
+
+int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds){
+    unsigned int buclet = hash(key, table->num_buckets);
+
+    kv_entry_t *curr = table->buckets[bucket];
+    while (curr != NUL){
+        if (srtcmp(curr->key, key) == 0){
+            strncpy(curr->value, val, MAC_VAL_LEN - 1);
+            curr->value[MAX_VAL_LEN - 1] = '\0';
+            return 0;
+        }
+        curr = curr->next;
+    }
+
+    kv_entry_t *new_entry = malloc(sizeof(kv_entry_t));
+    if (!new_entry) return -1;
+    strncpy(new_entry->key, key, MAX_KEY_LEN - 1);
+    new_entry->key[MAX_KEY_LEN - 1] = '\0';
+    strncpy(new_entry->value, val, MAX_VAL_LEN - 1);
+    new_entry->value[MAX_VAL_LEN - 1] = '\0';
+    new_entry->next = table->buckets[bucket];
+
+    new_entry->next = table->buckets[bucket];
+    table->buckets[bucket] = new_entry;
+
+    return 0;
+}
+
+int kv_get(kv_table_t *table, const char *key, char *out_val){
+    
+}
+
 int main(int argc, char **argv) {
     if (argc < 4 || argc > 5) {
         usage(argv[0]);
@@ -133,6 +209,22 @@ int main(int argc, char **argv) {
      *
      * TODO (shutdown): drain queue, join all threads, free everything.
      * ================================================================ */
+
+     kv_table_t *server_table = kv_init(num_buckets);
+
+     while(!g_shutdown) {
+        int conn = accept(listen_fd, NULL, NULL);
+        if (conn < 0){
+            if(errno == EINTR){
+                continue;
+            } else {
+                perror("accept");
+                break;
+            }
+        }
+        handle_client(conn, server_table);
+        close(conn);
+    }
 
     close(listen_fd);
     return 0;

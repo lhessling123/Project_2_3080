@@ -36,7 +36,7 @@ typedef struct kv_entry {
 typedef struct kv_table {
     int num_buckets;
     kv_entry_t **buckets;
-} kv_table_t
+} kv_table_t;
 
 /*
  * TODO (Stage 1): Define your hash-table entry and bucket types.
@@ -47,12 +47,12 @@ typedef struct kv_table {
  *
  * TODO (Stage 4): Add expiration timestamp to entries; declare the sweeper
  *                 thread function.
- */
+*/
 
 /* -------- Function prototypes you will likely want ---------------------- */
 
 /* Protocol / connection handling (Stage 1) */
-void handle_client(int conn_fd);        /* loop: read line, parse, reply */
+void handle_client(int conn_fd, kv_table_t *table);        /* loop: read line, parse, reply */
 
 
 /* Hash-table operations (Stage 1, made thread-safe in Stage 3) */
