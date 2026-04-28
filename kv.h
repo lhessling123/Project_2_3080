@@ -66,5 +66,6 @@ kv_table_t *kv_init(int num_buckets);
 int kv_get(kv_table_t *table, const char *key, char *out_val);
 int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds);
 int kv_del(kv_table_t *table, const char *key);
+void kv_free(kv_table_t *table);
 
 #endif /* KV_H */

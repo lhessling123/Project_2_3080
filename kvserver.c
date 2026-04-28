@@ -93,6 +93,9 @@ void handle_client(int conn_fd, kv_table_t *table){
         char cmd[16], key[MAX_KEY_LEN], val[MAX_VAL_LEN];
         int ttl = 0;
 
+        key[0] = '\0';
+        val[0] = '\0';
+
         int parsed = sscanf(line, "%15s %255s %255s %d", cmd, key, val, &ttl);
         if (parsed < 1) continue;
 
@@ -100,11 +103,29 @@ void handle_client(int conn_fd, kv_table_t *table){
             fprintf(out, RESP_BYE);
             break;
         } else if (strcmp(cmd, "GET") == 0){
-
+            if(parsed >= 2){
+                char out_val[MAX_VAL_LEN];
+                if (kv_get(table, key, out_val) == 0){
+                    fprintf(out, "%s\n", out_val);
+                } else {
+                    fprintf(out, RESP_NOTFOUND);
+                }
+            }
         } else if (strcmp(cmd, "PUT") == 0){
-
+             if(parsed >= 3){
+                kv_put(table, key, val, ttl);
+                fprintf(out, RESP_OK);
+             } else {
+                fprintf(out, "ERROR\n");
+            }
         } else if (strcmp(cmd, "DEL") == 0){
-
+            if(parsed >= 2){
+                if (kv_del(table, key) == 0){
+                    fprintf(out, RESP_OK);
+                } else {
+                    fprintf(out, RESP_NOTFOUND);
+                }
+            }
         } else {
             fprintf(out, "ERR unknown command\n");
         }
@@ -116,6 +137,16 @@ void handle_client(int conn_fd, kv_table_t *table){
     fclose(out);
 }
 
+unsigned int hash(const char *key, int num_buckets){
+    unsigned long hash = 5381;
+    int i = 0;
+    while (key[i] != '\0'){
+        hash = ((hash << 5) + hash) + key[i];
+        i++;
+    }
+    return (unsigned int)(hash % num_buckets);
+}
+
 kv_table_t *kv_init(int num_buckets){
     kv_table_t *return_table = malloc(sizeof(kv_table_t));
     return_table->num_buckets = num_buckets;
@@ -124,12 +155,12 @@ kv_table_t *kv_init(int num_buckets){
 }
 
 int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds){
-    unsigned int buclet = hash(key, table->num_buckets);
+    unsigned int bucket = hash(key, table->num_buckets);
 
     kv_entry_t *curr = table->buckets[bucket];
-    while (curr != NUL){
-        if (srtcmp(curr->key, key) == 0){
-            strncpy(curr->value, val, MAC_VAL_LEN - 1);
+    while (curr != NULL){
+        if (strcmp(curr->key, key) == 0){
+            strncpy(curr->value, val, MAX_VAL_LEN - 1);
             curr->value[MAX_VAL_LEN - 1] = '\0';
             return 0;
         }
@@ -151,7 +182,49 @@ int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds)
 }
 
 int kv_get(kv_table_t *table, const char *key, char *out_val){
-    
+    unsigned int bucket = hash(key, table->num_buckets);
+    kv_entry_t *curr = table->buckets[bucket];
+    while (curr != NULL){
+        if (strcmp(curr->key, key) == 0){
+            strncpy(out_val, curr->value, MAX_VAL_LEN);
+            return 0;
+        }
+        curr = curr->next;
+    }
+    return -1;
+}
+
+int kv_del(kv_table_t *table, const char *key){
+    unsigned int bucket = hash(key, table->num_buckets);
+    kv_entry_t *curr = table->buckets[bucket];
+    kv_entry_t *prev = NULL;
+    while (curr != NULL){
+        if (strcmp(curr->key, key) == 0){
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                table->buckets[bucket] = curr->next;
+            }
+            free(curr);
+            return 0;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    return -1;
+}
+
+void kv_free(kv_table_t *table){
+    for (int i = 0; i < table->num_buckets; i++){
+        kv_entry_t *curr = table->buckets[i];
+        while (curr != NULL){
+            kv_entry_t *next = curr->next;
+            free(curr);
+            curr = next;
+        }
+    }
+    free(table->buckets);
+    free(table);
 }
 
 int main(int argc, char **argv) {
