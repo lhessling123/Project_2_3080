@@ -63,6 +63,14 @@ int main(int argc, char **argv) {
      *   4. Compute and print total elapsed time and total ops/sec.
      */
 
+     pthread_t threads[num_clients];
+     
+
+
+
+
+
+
     fprintf(stderr, "bench_client: not implemented yet\n");
     return 0;
 }
