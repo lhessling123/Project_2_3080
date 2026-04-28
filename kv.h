@@ -26,6 +26,15 @@
 
 /* -------- Your types go here -------------------------------------------- */
 
+typedef struct kv_stats {
+    int keys;
+    int hits;
+    int misses;
+    int puts;
+    int dels;
+    time_t start_time;
+} kv_stats_t;
+
 //I am predefining the arrays but could change for better memory management
 typedef struct kv_entry {
     char key[MAX_KEY_LEN];
@@ -36,6 +45,7 @@ typedef struct kv_entry {
 typedef struct kv_table {
     int num_buckets;
     kv_entry_t **buckets;
+    kv_stats_t *stats;
 } kv_table_t;
 
 /*

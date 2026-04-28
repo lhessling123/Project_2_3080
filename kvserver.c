@@ -106,7 +106,7 @@ void handle_client(int conn_fd, kv_table_t *table){
             if(parsed >= 2){
                 char out_val[MAX_VAL_LEN];
                 if (kv_get(table, key, out_val) == 0){
-                    fprintf(out, "%s\n", out_val);
+                    fprintf(out, "VALUE %s\n", out_val);
                 } else {
                     fprintf(out, RESP_NOTFOUND);
                 }
@@ -126,6 +126,15 @@ void handle_client(int conn_fd, kv_table_t *table){
                     fprintf(out, RESP_NOTFOUND);
                 }
             }
+        } else if (strcmp(cmd, "STATS") == 0){
+            time_t now = time(NULL);
+            double uptime = difftime(now, table->stats->start_time);
+
+            fprintf(out, "STATS keys=%d hits=%d misses=%d puts=%d dels=%d active_conns=1 uptime=%.2f\n",
+                table->stats->keys, table->stats->hits, table->stats->misses,
+                table->stats->puts, table->stats->dels, //active_conns, 
+                uptime);
+
         } else {
             fprintf(out, "ERR unknown command\n");
         }
@@ -151,6 +160,15 @@ kv_table_t *kv_init(int num_buckets){
     kv_table_t *return_table = malloc(sizeof(kv_table_t));
     return_table->num_buckets = num_buckets;
     return_table->buckets = calloc(num_buckets, sizeof(kv_entry_t *));
+    return_table->stats = malloc(sizeof(kv_stats_t));
+
+    return_table->stats->keys = 0;
+    return_table->stats->hits = 0;
+    return_table->stats->misses = 0;
+    return_table->stats->puts = 0;
+    return_table->stats->dels = 0;
+    return_table->stats->start_time = time(NULL);
+
     return return_table;
 }
 
@@ -158,6 +176,9 @@ int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds)
     unsigned int bucket = hash(key, table->num_buckets);
 
     kv_entry_t *curr = table->buckets[bucket];
+    
+    table->stats->puts++;
+
     while (curr != NULL){
         if (strcmp(curr->key, key) == 0){
             strncpy(curr->value, val, MAX_VAL_LEN - 1);
@@ -174,11 +195,9 @@ int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds)
     strncpy(new_entry->value, val, MAX_VAL_LEN - 1);
     new_entry->value[MAX_VAL_LEN - 1] = '\0';
     new_entry->next = table->buckets[bucket];
-
-    new_entry->next = table->buckets[bucket];
     table->buckets[bucket] = new_entry;
-
-    return 0;
+    table->stats->keys++;
+    return 1;
 }
 
 int kv_get(kv_table_t *table, const char *key, char *out_val){
@@ -187,10 +206,12 @@ int kv_get(kv_table_t *table, const char *key, char *out_val){
     while (curr != NULL){
         if (strcmp(curr->key, key) == 0){
             strncpy(out_val, curr->value, MAX_VAL_LEN);
+            table->stats->hits++;
             return 0;
         }
         curr = curr->next;
     }
+    table->stats->misses++;
     return -1;
 }
 
@@ -206,6 +227,8 @@ int kv_del(kv_table_t *table, const char *key){
                 table->buckets[bucket] = curr->next;
             }
             free(curr);
+            table->stats->dels++;
+            table->stats->keys--;
             return 0;
         }
         prev = curr;
@@ -300,5 +323,6 @@ int main(int argc, char **argv) {
     }
 
     close(listen_fd);
+    kv_free(server_table);
     return 0;
 }
