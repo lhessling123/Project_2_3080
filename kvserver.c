@@ -130,9 +130,9 @@ void handle_client(int conn_fd, kv_table_t *table){
             time_t now = time(NULL);
             double uptime = difftime(now, table->stats->start_time);
 
-            fprintf(out, "STATS keys=%d hits=%d misses=%d puts=%d dels=%d active_conns=1 uptime=%.2f\n",
+            fprintf(out, "STATS keys=%d hits=%d misses=%d puts=%d dels=%d active_conns=%d uptime=%.2f\n",
                 table->stats->keys, table->stats->hits, table->stats->misses,
-                table->stats->puts, table->stats->dels, //active_conns, 
+                table->stats->puts, table->stats->dels, atomic_load(&table->stats->active_conns), 
                 uptime);
 
         } else {
@@ -146,108 +146,59 @@ void handle_client(int conn_fd, kv_table_t *table){
     fclose(out);
 }
 
-unsigned int hash(const char *key, int num_buckets){
-    unsigned long hash = 5381;
-    int i = 0;
-    while (key[i] != '\0'){
-        hash = ((hash << 5) + hash) + key[i];
-        i++;
+void worker_enqueue(work_queue_t *queue, int fd){
+    pthread_mutex_lock(&queue->lock);
+    while(queue->count == queue->capacity && !g_shutdown){
+        pthread_cond_wait(&queue->dequeued, &queue->lock);
     }
-    return (unsigned int)(hash % num_buckets);
-}
-
-kv_table_t *kv_init(int num_buckets){
-    kv_table_t *return_table = malloc(sizeof(kv_table_t));
-    return_table->num_buckets = num_buckets;
-    return_table->buckets = calloc(num_buckets, sizeof(kv_entry_t *));
-    return_table->stats = malloc(sizeof(kv_stats_t));
-
-    return_table->stats->keys = 0;
-    return_table->stats->hits = 0;
-    return_table->stats->misses = 0;
-    return_table->stats->puts = 0;
-    return_table->stats->dels = 0;
-    return_table->stats->start_time = time(NULL);
-
-    return return_table;
-}
-
-int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds){
-    unsigned int bucket = hash(key, table->num_buckets);
-
-    kv_entry_t *curr = table->buckets[bucket];
-    
-    table->stats->puts++;
-
-    while (curr != NULL){
-        if (strcmp(curr->key, key) == 0){
-            strncpy(curr->value, val, MAX_VAL_LEN - 1);
-            curr->value[MAX_VAL_LEN - 1] = '\0';
-            return 0;
-        }
-        curr = curr->next;
+    if(g_shutdown){
+        pthread_mutex_unlock(&queue->lock);
+        return;
     }
-
-    kv_entry_t *new_entry = malloc(sizeof(kv_entry_t));
-    if (!new_entry) return -1;
-    strncpy(new_entry->key, key, MAX_KEY_LEN - 1);
-    new_entry->key[MAX_KEY_LEN - 1] = '\0';
-    strncpy(new_entry->value, val, MAX_VAL_LEN - 1);
-    new_entry->value[MAX_VAL_LEN - 1] = '\0';
-    new_entry->next = table->buckets[bucket];
-    table->buckets[bucket] = new_entry;
-    table->stats->keys++;
-    return 1;
+    enqueue(queue, fd);
+    pthread_cond_signal(&queue->enqueued);
+    pthread_mutex_unlock(&queue->lock);
 }
 
-int kv_get(kv_table_t *table, const char *key, char *out_val){
-    unsigned int bucket = hash(key, table->num_buckets);
-    kv_entry_t *curr = table->buckets[bucket];
-    while (curr != NULL){
-        if (strcmp(curr->key, key) == 0){
-            strncpy(out_val, curr->value, MAX_VAL_LEN);
-            table->stats->hits++;
-            return 0;
-        }
-        curr = curr->next;
+int worker_dequeue(work_queue_t *queue){
+    pthread_mutex_lock(&queue->lock);
+    while(queue->count == 0 && !g_shutdown){
+        pthread_cond_wait(&queue->enqueued, &queue->lock);
     }
-    table->stats->misses++;
-    return -1;
-}
-
-int kv_del(kv_table_t *table, const char *key){
-    unsigned int bucket = hash(key, table->num_buckets);
-    kv_entry_t *curr = table->buckets[bucket];
-    kv_entry_t *prev = NULL;
-    while (curr != NULL){
-        if (strcmp(curr->key, key) == 0){
-            if (prev) {
-                prev->next = curr->next;
-            } else {
-                table->buckets[bucket] = curr->next;
-            }
-            free(curr);
-            table->stats->dels++;
-            table->stats->keys--;
-            return 0;
-        }
-        prev = curr;
-        curr = curr->next;
+    if(g_shutdown && queue->count == 0){
+        pthread_mutex_unlock(&queue->lock);
+        return -1;
     }
-    return -1;
+    int item = dequeue(queue);
+    pthread_cond_signal(&queue->dequeued);
+    pthread_mutex_unlock(&queue->lock);
+    return item;
 }
 
-void kv_free(kv_table_t *table){
-    for (int i = 0; i < table->num_buckets; i++){
-        kv_entry_t *curr = table->buckets[i];
-        while (curr != NULL){
-            kv_entry_t *next = curr->next;
-            free(curr);
-            curr = next;
+void *worker_main(void *arg){
+    worker_args_t *worker_args = (worker_args_t *)arg;
+    int id = worker_args->thread_id;
+    kv_table_t *table = worker_args->table;
+    work_queue_t *queue = worker_args->queue;
+
+    printf("Worker %d: started\n", id);
+
+    while(1){
+        int client_fd = worker_dequeue(queue);
+
+        //fprintf(stderr, "kvserver: recieved command, using worker %d with shutdown %d. client_fd: %d\n", id, g_shutdown, client_fd);
+
+        if(client_fd >= 0){
+            atomic_fetch_add(&table->stats->active_conns, 1);
+            handle_client(client_fd, table);
+            atomic_fetch_sub(&table->stats->active_conns, 1);
+        }else {
+            if(g_shutdown)
+                break;
+            
         }
     }
-    free(table->buckets);
-    free(table);
+    return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -306,7 +257,20 @@ int main(int argc, char **argv) {
      * TODO (shutdown): drain queue, join all threads, free everything.
      * ================================================================ */
 
+     work_queue_t *queue = queue_init(num_workers * 2);
      kv_table_t *server_table = kv_init(num_buckets);
+     pthread_t workers[num_workers];
+     worker_args_t worker_args[num_workers];
+
+     for (int i = 0; i < num_workers; i++){
+        worker_args[i].thread_id = i;
+        worker_args[i].table = server_table;
+        worker_args[i].queue = queue;
+        if(pthread_create(&workers[i], NULL, worker_main, &worker_args[i]) != 0){
+            perror("pthread_create");
+            return 1;
+        }
+     }
 
      while(!g_shutdown) {
         int conn = accept(listen_fd, NULL, NULL);
@@ -318,11 +282,28 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-        handle_client(conn, server_table);
-        close(conn);
+        worker_enqueue(queue, conn);
     }
+
+    fprintf(stderr, "main: exited accept loop\n");
+
+    pthread_mutex_lock(&queue->lock);
+    pthread_cond_broadcast(&queue->enqueued);
+    pthread_mutex_unlock(&queue->lock);
+
+
+    fprintf(stderr, "main: broadcast sent\n");
+
+   
+    for(int i = 0; i < num_workers; i++){
+        fprintf(stderr, "main: joining worker %d\n", i);
+        pthread_join(workers[i], NULL);
+        fprintf(stderr, "main: worker %d joined\n", i);
+    }
+
 
     close(listen_fd);
     kv_free(server_table);
+    queue_free(queue);
     return 0;
 }

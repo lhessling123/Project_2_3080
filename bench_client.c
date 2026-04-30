@@ -38,14 +38,14 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef struct {
+typedef struct client_args{
     int thread_id;
-    const char *host;
     int port;
     int ops_per_client;
     int read_pct;
     unsigned int seed;
-} worker_args_t;
+    const char *host;
+} client_args_t;
 
 static int connect_to_server(const char *host, int port){
     struct addrinfo hints, *res;
@@ -79,7 +79,7 @@ static int connect_to_server(const char *host, int port){
 }
 
 void* client_thread(void *arg) {
-    worker_args_t *args = (worker_args_t*)arg;
+    client_args_t *args = (client_args_t*)arg;
 
 
 
@@ -141,9 +141,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* TODO:
+     *   1. Spawn num_clients pthreads.
+     *   2. Each thread: connect to <host>:<port>, run ops_per_client
+     *      operations mixing GETs and PUTs per read_pct.
+     *   3. Join all threads.
+     *   4. Compute and print total elapsed time and total ops/sec.
+     */
+
+
     struct timespec start_time, end_time;
-    pthread_t *threads = malloc((size_t)num_clients * sizeof(*threads));
-    worker_args_t *args = malloc((size_t)num_clients * sizeof(*args));
+    pthread_t threads[num_clients];
+    client_args_t args[num_clients];
 
     if (!threads || !args) {
         perror("malloc");
@@ -166,8 +175,6 @@ int main(int argc, char **argv) {
             for (int j = 0; j < i; j++) {
                 pthread_join(threads[j], NULL);
             }
-            free(threads);
-            free(args);
             return 1;
         }
     }
@@ -187,7 +194,5 @@ int main(int argc, char **argv) {
     printf("Total Operations:   %lld\n", total_ops);
     printf("Throughput:         %.2f ops/sec\n", throughput);
 
-    free(threads);
-    free(args);
     return 0;
 }
