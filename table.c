@@ -35,6 +35,7 @@ kv_table_t *kv_init(int num_buckets){
 
 int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds){
     pthread_rwlock_wrlock(&table->rwlock);
+    (void)ttl_seconds; // TTL is ignored in this implementation
     unsigned int bucket = hash(key, table->num_buckets);
     kv_entry_t *curr = table->buckets[bucket];
     
