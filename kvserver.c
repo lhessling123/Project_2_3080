@@ -186,7 +186,7 @@ void *worker_main(void *arg){
     while(1){
         int client_fd = worker_dequeue(queue);
 
-        //fprintf(stderr, "kvserver: recieved command, using worker %d with shutdown %d. client_fd: %d\n", id, g_shutdown, client_fd);
+        fprintf(stderr, "kvserver: recieved command, using worker %d with shutdown %d. client_fd: %d\n", id, g_shutdown, client_fd);
 
         if(client_fd >= 0){
             atomic_fetch_add(&table->stats->active_conns, 1);
