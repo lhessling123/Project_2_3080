@@ -97,7 +97,7 @@ void* client_thread(void *arg) {
 
     for(int i = 0; i < args->ops_per_client; i++){
         is_get = (rand_r(&args->seed) % 100) < args->read_pct;
-        ket_id = rand_r(&args->seed) % 1000;
+        key_id = rand_r(&args->seed) % 1000;
         if(is_get){
             sprintf(buf, "GET key%d\n", key_id);
         }else{
@@ -115,12 +115,27 @@ void* client_thread(void *arg) {
             break; 
         }
         buf[n] = '\0';
-        printf("Echo: %s", buf);
+        //printf("Echo: %s", buf);
+    }
+
+    sprintf(buf, "QUIT\n");
+    sent = write(sockfd, buf, strlen(buf));
+    if (sent < 0){
+        perror("write");
+        return NULL;
+    }else{
+        n = read(sockfd, buf, sizeof(buf) - 1);
+        if (n <= 0){
+            perror("Server closed connection.\n");
+        } else {
+            buf[n] = '\0';
+            //printf("Echo: %s", buf);
+        }
     }
 
     
     close(sockfd);
-    printf("Connection closed for thread %d\n", args->thread_id);
+    //printf("Connection closed for thread %d\n", args->thread_id);
     return NULL;
 }
 
