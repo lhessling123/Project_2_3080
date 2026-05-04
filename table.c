@@ -34,7 +34,6 @@ kv_table_t *kv_init(int num_buckets){
 }
 
 int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds){
-    pthread_rwlock_wrlock(&table->rwlock);
     (void)ttl_seconds; // TTL is ignored in this implementation
     unsigned int bucket = hash(key, table->num_buckets);
     kv_entry_t *curr = table->buckets[bucket];
@@ -45,7 +44,6 @@ int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds)
         if (strcmp(curr->key, key) == 0){
             strncpy(curr->value, val, MAX_VAL_LEN - 1);
             curr->value[MAX_VAL_LEN - 1] = '\0';
-            pthread_rwlock_unlock(&table->rwlock);
             return 0;
         }
         curr = curr->next;
@@ -53,7 +51,6 @@ int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds)
 
     kv_entry_t *new_entry = malloc(sizeof(kv_entry_t));
     if (!new_entry) {
-        pthread_rwlock_unlock(&table->rwlock);
         return -1;
     }
     strncpy(new_entry->key, key, MAX_KEY_LEN - 1);
@@ -63,30 +60,25 @@ int kv_put(kv_table_t *table, const char *key, const char *val, int ttl_seconds)
     new_entry->next = table->buckets[bucket];
     table->buckets[bucket] = new_entry;
     atomic_fetch_add(&table->stats->keys, 1);
-    pthread_rwlock_unlock(&table->rwlock);
     return 1;
 }
 
 int kv_get(kv_table_t *table, const char *key, char *out_val){
-    pthread_rwlock_rdlock(&table->rwlock);
     unsigned int bucket = hash(key, table->num_buckets);
     kv_entry_t *curr = table->buckets[bucket];
     while (curr != NULL){
         if (strcmp(curr->key, key) == 0){
             strncpy(out_val, curr->value, MAX_VAL_LEN);
             atomic_fetch_add(&table->stats->hits, 1);
-            pthread_rwlock_unlock(&table->rwlock);
             return 0;
         }
         curr = curr->next;
     }
     atomic_fetch_add(&table->stats->misses, 1);
-    pthread_rwlock_unlock(&table->rwlock);
     return -1;
 }
 
 int kv_del(kv_table_t *table, const char *key){
-    pthread_rwlock_wrlock(&table->rwlock);
     unsigned int bucket = hash(key, table->num_buckets);
     kv_entry_t *curr = table->buckets[bucket];
     kv_entry_t *prev = NULL;
@@ -100,13 +92,11 @@ int kv_del(kv_table_t *table, const char *key){
             free(curr);
             atomic_fetch_add(&table->stats->dels, 1);
             atomic_fetch_sub(&table->stats->keys, 1);
-            pthread_rwlock_unlock(&table->rwlock);
             return 0;
         }
         prev = curr;
         curr = curr->next;
     }
-    pthread_rwlock_unlock(&table->rwlock);
     return -1;
 }
 

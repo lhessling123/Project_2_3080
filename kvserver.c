@@ -79,71 +79,130 @@ static void usage(const char *prog) {
 }
 
 void handle_client(int conn_fd, kv_table_t *table){
-    char line[MAX_LINE_LEN];
-    FILE *in = fdopen(conn_fd, "r");
-    FILE *out = fdopen(dup(conn_fd), "w");
+    char buf[MAX_LINE_LEN];
+    ssize_t n;
 
-    if(!in || !out){
-        if (in) fclose(in);
-        if (out) fclose(out);
-        return;
-    }
-    
-    while (fgets(line, sizeof(line), in)){
+    while((n = read(conn_fd, buf, sizeof(buf) - 1)) > 0){
+        buf[n] = '\0';
+
         char cmd[16], key[MAX_KEY_LEN], val[MAX_VAL_LEN];
         int ttl = 0;
 
-        key[0] = '\0';
-        val[0] = '\0';
-
-        int parsed = sscanf(line, "%15s %255s %255s %d", cmd, key, val, &ttl);
+        int parsed = sscanf(buf, "%15s %255s %255s %d", cmd, key, val, &ttl);
         if (parsed < 1) continue;
 
         if (strcmp(cmd, "QUIT") == 0){
-            fprintf(out, RESP_BYE);
+            //fprintf(out, RESP_BYE);
+            write(conn_fd, RESP_BYE, strlen(RESP_BYE));
             break;
         } else if (strcmp(cmd, "GET") == 0){
+            fprintf(stderr, "trying to get read lock\n");
+            while(pthread_rwlock_tryrdlock(&table->rwlock) != 0){
+                //fprintf(stderr, "read lock busy, retrying...\n");
+                if(g_shutdown){
+                    fprintf(stderr, "shutdown detected while trying to get read lock\n");
+                    // fclose(in);
+                    // fclose(out);
+                    close(conn_fd);
+                    return;
+                }
+            }
+            fprintf(stderr, "                           got read lock\n");
             if(parsed >= 2){
                 char out_val[MAX_VAL_LEN];
                 if (kv_get(table, key, out_val) == 0){
-                    fprintf(out, "VALUE %s\n", out_val);
+                    //fprintf(out, "VALUE %s\n", out_val);
+                    sprintf(buf, "VALUE %s\n", out_val);
+                    write(conn_fd, buf, strlen(buf));
                 } else {
-                    fprintf(out, RESP_NOTFOUND);
+                    //fprintf(out, RESP_NOTFOUND);
+                    write(conn_fd, RESP_NOTFOUND, strlen(RESP_NOTFOUND));
                 }
             }
+            pthread_rwlock_unlock(&table->rwlock);
+            fprintf(stderr, "released read lock\n");
         } else if (strcmp(cmd, "PUT") == 0){
+            fprintf(stderr, "trying to get write lock\n");
+            while(pthread_rwlock_trywrlock(&table->rwlock) != 0){
+                //fprintf(stderr, "write lock busy, retrying...\n");
+                if(g_shutdown){
+                    fprintf(stderr, "shutdown detected while trying to get write lock\n");
+                    // fclose(in);
+                    // fclose(out);
+                    close(conn_fd);
+                    return;
+                }
+            }
+            fprintf(stderr, "                           got write lock\n");
              if(parsed >= 3){
                 kv_put(table, key, val, ttl);
-                fprintf(out, RESP_OK);
+                //fprintf(out, RESP_OK);
+                write(conn_fd, RESP_OK, strlen(RESP_OK));
              } else {
-                fprintf(out, "ERROR\n");
+                //fprintf(out, "ERROR\n");
+                write(conn_fd, "ERROR\n", strlen("ERROR\n"));
             }
+            pthread_rwlock_unlock(&table->rwlock);
+            fprintf(stderr, "released write lock\n");
         } else if (strcmp(cmd, "DEL") == 0){
-            if(parsed >= 2){
-                if (kv_del(table, key) == 0){
-                    fprintf(out, RESP_OK);
-                } else {
-                    fprintf(out, RESP_NOTFOUND);
+            fprintf(stderr, "trying to get write lock\n");
+                while(pthread_rwlock_trywrlock(&table->rwlock) != 0){
+                //fprintf(stderr, "write lock busy, retrying...\n");
+                if(g_shutdown){
+                    fprintf(stderr, "shutdown detected while trying to get write lock\n");
+                    //fclose(in);
+                    //fclose(out);
+                    close(conn_fd);
+                    return;
                 }
             }
+            fprintf(stderr, "                           got write lock\n");
+            if(parsed >= 2){
+                if (kv_del(table, key) == 0){
+                    //fprintf(out, RESP_OK);
+                    write(conn_fd, RESP_OK, strlen(RESP_OK));
+                } else {
+                    //fprintf(out, RESP_NOTFOUND);
+                    write(conn_fd, RESP_NOTFOUND, strlen(RESP_NOTFOUND));
+                }
+            }
+            pthread_rwlock_unlock(&table->rwlock);
+            fprintf(stderr, "released write lock\n");
         } else if (strcmp(cmd, "STATS") == 0){
+            while(pthread_rwlock_tryrdlock(&table->rwlock) != 0){
+                //fprintf(stderr, "read lock busy, retrying...\n");
+                if(g_shutdown){
+                    fprintf(stderr, "shutdown detected while trying to get read lock\n");
+                    //fclose(in);
+                    //fclose(out);
+                    close(conn_fd);
+                    return;
+                }
+            }
+            fprintf(stderr, "                           got read lock for stats\n");
             time_t now = time(NULL);
             double uptime = difftime(now, table->stats->start_time);
-
-            fprintf(out, "STATS keys=%d hits=%d misses=%d puts=%d dels=%d active_conns=%d uptime=%.2f\n",
+            // fprintf(out, "STATS keys=%d hits=%d misses=%d puts=%d dels=%d active_conns=%d uptime=%.2f\n",
+            //     table->stats->keys, table->stats->hits, table->stats->misses,
+            //     table->stats->puts, table->stats->dels, atomic_load(&table->stats->active_conns), 
+            //     uptime);
+            sprintf(buf, "STATS keys=%d hits=%d misses=%d puts=%d dels=%d active_conns=%d uptime=%.2f\n",
                 table->stats->keys, table->stats->hits, table->stats->misses,
                 table->stats->puts, table->stats->dels, atomic_load(&table->stats->active_conns), 
                 uptime);
-
+            write(conn_fd, buf, strlen(buf));
+            
+            pthread_rwlock_unlock(&table->rwlock);
+            fprintf(stderr, "released read lock\n");
         } else {
-            fprintf(out, "ERR unknown command\n");
+            //fprintf(out, "ERR unknown command\n");
+            sprintf(buf, "ERR unknown command\n");
+            write(conn_fd, buf, strlen(buf));
         }
-
-        fflush(out);
+        fflush(stdout);
     }
-
-    fclose(in);
-    fclose(out);
+    
+    close(conn_fd);
 }
 
 void worker_enqueue(work_queue_t *queue, int fd){
