@@ -9,10 +9,10 @@
 #ifndef KV_H
 #define KV_H
 
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
-#include <pthread.h>
 #include <stdatomic.h>
 
 /* -------- Protocol constants (do NOT change) ---------------------------- */
@@ -60,7 +60,7 @@ typedef struct kv_table {
     int num_buckets;
     kv_entry_t **buckets;
     kv_stats_t *stats;
-    pthread_rwlock_t rqlock;
+    pthread_rwlock_t rwlock;
 } kv_table_t;
 
 typedef struct queue_element {
