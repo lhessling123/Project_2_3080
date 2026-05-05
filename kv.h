@@ -9,10 +9,10 @@
 #ifndef KV_H
 #define KV_H
 
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
-#include <pthread.h>
 #include <stdatomic.h>
 
 /* -------- Protocol constants (do NOT change) ---------------------------- */
@@ -53,6 +53,7 @@ typedef struct kv_stats {
 typedef struct kv_entry {
     char key[MAX_KEY_LEN];
     char value[MAX_VAL_LEN];
+    time_t expire_at;
     struct kv_entry *next;
 } kv_entry_t;
 
