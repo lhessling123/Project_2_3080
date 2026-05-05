@@ -87,6 +87,7 @@ void handle_client(int conn_fd, kv_table_t *table){
 
     while((n = read(conn_fd, buf, sizeof(buf) - 1)) > 0){
         buf[n] = '\0';
+        ttl = 0;
         parsed = sscanf(buf, "%15s %255s %255s %d", cmd, key, val, &ttl);
         if (parsed < 1) continue;
 
@@ -98,11 +99,6 @@ void handle_client(int conn_fd, kv_table_t *table){
             //fprintf(stderr, "trying to get read lock\n");
             while(pthread_rwlock_tryrdlock(&table->rwlock) != 0){
                 //fprintf(stderr, "read lock busy, retrying...\n");
-                // if(g_shutdown){
-                //     //fprintf(stderr, "shutdown detected while trying to get read lock\n");
-                //     close(conn_fd);
-                //     return;
-                // }
             }
             //fprintf(stderr, "                           got read lock\n");
             if(parsed >= 2){
@@ -119,16 +115,12 @@ void handle_client(int conn_fd, kv_table_t *table){
             //fprintf(stderr, "trying to get write lock\n");
             while(pthread_rwlock_trywrlock(&table->rwlock) != 0){
                 //fprintf(stderr, "write lock busy, retrying...\n");
-                // if(g_shutdown){
-                //     //fprintf(stderr, "shutdown detected while trying to get write lock\n");
-                //     close(conn_fd);
-                //     return;
-                // }
             }
             //fprintf(stderr, "                           got write lock\n");
              if(parsed >= 3){
                 kv_put(table, key, val, ttl);
-                sprintf(buf, RESP_OK);
+                sprintf(buf, "Put OK, key: %s, val: %s, ttl: %d\n", key, val, ttl);
+                //sprintf(buf, RESP_OK);
              } else {
                 sprintf(buf, "ERROR\n");
             }
@@ -138,11 +130,6 @@ void handle_client(int conn_fd, kv_table_t *table){
             //fprintf(stderr, "trying to get write lock\n");
                 while(pthread_rwlock_trywrlock(&table->rwlock) != 0){
                 //fprintf(stderr, "write lock busy, retrying...\n");
-                // if(g_shutdown){
-                //     //fprintf(stderr, "shutdown detected while trying to get write lock\n");
-                //     close(conn_fd);
-                //     return;
-                // }
             }
             //fprintf(stderr, "                           got write lock\n");
             if(parsed >= 2){
@@ -159,11 +146,6 @@ void handle_client(int conn_fd, kv_table_t *table){
         } else if (strcmp(cmd, "STATS") == 0){
             while(pthread_rwlock_tryrdlock(&table->rwlock) != 0){
                 //fprintf(stderr, "read lock busy, retrying...\n");
-                // if(g_shutdown){
-                //     //fprintf(stderr, "shutdown detected while trying to get read lock\n");
-                //     close(conn_fd);
-                //     return;
-                // }
             }
             //fprintf(stderr, "                           got read lock for stats\n");
             time_t now = time(NULL);
@@ -193,12 +175,8 @@ void handle_client(int conn_fd, kv_table_t *table){
 
 void worker_enqueue(work_queue_t *queue, int fd){
     pthread_mutex_lock(&queue->lock);
-    while(queue->count == queue->capacity && !g_shutdown){
+    while(queue->count == queue->capacity){
         pthread_cond_wait(&queue->dequeued, &queue->lock);
-    }
-    if(g_shutdown){
-        pthread_mutex_unlock(&queue->lock);
-        return;
     }
     enqueue(queue, fd);
     pthread_cond_signal(&queue->enqueued);
@@ -207,12 +185,8 @@ void worker_enqueue(work_queue_t *queue, int fd){
 
 int worker_dequeue(work_queue_t *queue){
     pthread_mutex_lock(&queue->lock);
-    while(queue->count == 0 && !g_shutdown){
+    while(queue->count == 0){
         pthread_cond_wait(&queue->enqueued, &queue->lock);
-    }
-    if(g_shutdown && queue->count == 0){
-        pthread_mutex_unlock(&queue->lock);
-        return -1;
     }
     int item = dequeue(queue);
     pthread_cond_signal(&queue->dequeued);
@@ -238,9 +212,7 @@ void *worker_main(void *arg){
             handle_client(client_fd, table);
             atomic_fetch_sub(&table->stats->active_conns, 1);
         }else {
-            if(g_shutdown)
-                break;
-            
+            break;
         }
     }
     return NULL;
@@ -332,9 +304,9 @@ int main(int argc, char **argv) {
 
     fprintf(stderr, "main: exited accept loop\n");
 
-    pthread_mutex_lock(&queue->lock);
-    pthread_cond_broadcast(&queue->enqueued);
-    pthread_mutex_unlock(&queue->lock);
+    for(int i = 0; i < num_workers; i++){
+        worker_enqueue(queue, -1);
+    }
 
 
     fprintf(stderr, "main: broadcast sent\n");
