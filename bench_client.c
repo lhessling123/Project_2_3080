@@ -38,6 +38,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "kv.h"
+
 typedef struct client_args{
     int thread_id;
     int port;
@@ -89,32 +91,52 @@ void* client_thread(void *arg) {
         return NULL;
     }
 
-    FILE *in = fdopen(sockfd, "r");
-    FILE *out = fdopen(dup(sockfd), "w");
-    char line[256];
+    char buf[MAX_LINE_LEN];
+    ssize_t sent, n;
+    int is_get, key_id;
 
     for(int i = 0; i < args->ops_per_client; i++){
-        int is_get = (rand_r(&args->seed) % 100) < args->read_pct;
-        int key_id = rand_r(&args->seed) % 1000;
-
+        is_get = (rand_r(&args->seed) % 100) < args->read_pct;
+        key_id = rand_r(&args->seed) % 1000;
         if(is_get){
-            fprintf(out, "GET key%d\n", key_id);
-        } else {
-            fprintf(out, "PUT key%d value%d\n", key_id, key_id);
+            sprintf(buf, "GET key%d\n", key_id);
+        }else{
+            sprintf(buf, "PUT key%d value%d\n", key_id, key_id);
         }
-        fflush(out);
-
-        if (fgets(line, sizeof(line), in) == NULL){
+        sent = write(sockfd, buf, strlen(buf));
+        if (sent < 0){
+            perror("write");
             break;
+        }
+
+        n = read(sockfd, buf, sizeof(buf) - 1);
+        if (n <= 0){
+            perror("Server closed connection.\n");
+            break; 
+        }
+        buf[n] = '\0';
+        //printf("Echo: %s", buf);
+    }
+
+    sprintf(buf, "QUIT\n");
+    sent = write(sockfd, buf, strlen(buf));
+    if (sent < 0){
+        perror("write");
+        return NULL;
+    }else{
+        n = read(sockfd, buf, sizeof(buf) - 1);
+        if (n <= 0){
+            perror("Server closed connection.\n");
+        } else {
+            buf[n] = '\0';
+            //printf("Echo: %s", buf);
         }
     }
 
-    fprintf(out, "QUIT\n");
-    fflush(out);
-    fclose(in);
-    fclose(out);
+    
+    close(sockfd);
+    //printf("Connection closed for thread %d\n", args->thread_id);
     return NULL;
-
 }
 
 static void usage(const char *prog) {
@@ -154,12 +176,12 @@ int main(int argc, char **argv) {
     pthread_t threads[num_clients];
     client_args_t args[num_clients];
 
-    if (!threads || !args) {
-        perror("malloc");
-        free(threads);
-        free(args);
-        return 1;
-    }
+    // if (!threads || !args) {
+    //     perror("malloc");
+    //     free(threads);
+    //     free(args);
+    //     return 1;
+    // }
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
 
