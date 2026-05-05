@@ -196,16 +196,15 @@ int worker_dequeue(work_queue_t *queue){
 
 void *worker_main(void *arg){
     worker_args_t *worker_args = (worker_args_t *)arg;
-    int id = worker_args->thread_id;
     kv_table_t *table = worker_args->table;
     work_queue_t *queue = worker_args->queue;
-
-    printf("Worker %d: started\n", id);
+    //int id = worker_args->thread_id;
+    //printf("Worker %d: started\n", worker_args->thread_id);
 
     while(1){
         int client_fd = worker_dequeue(queue);
 
-        fprintf(stderr, "kvserver: recieved command, using worker %d with shutdown %d. client_fd: %d\n", id, g_shutdown, client_fd);
+        //fprintf(stderr, "kvserver: recieved command, using worker %d with shutdown %d. client_fd: %d\n", id, g_shutdown, client_fd);
 
         if(client_fd >= 0){
             atomic_fetch_add(&table->stats->active_conns, 1);
@@ -214,6 +213,53 @@ void *worker_main(void *arg){
         }else {
             break;
         }
+    }
+    return NULL;
+}
+
+void *sweeper_main(void *arg){
+    sweeper_args_t *sweeper_args = (sweeper_args_t *)arg;
+    kv_table_t *table = sweeper_args->table;
+    int sweeper_ms = sweeper_args->sweeper_ms;
+
+    struct timespec ts;
+    ts.tv_sec = sweeper_ms / 1000;
+    ts.tv_nsec = (sweeper_ms % 1000) * 1000000;
+    kv_entry_t *curr, *prev, *dead;
+
+    while(!g_shutdown){
+        nanosleep(&ts, NULL);
+        //fprintf(stderr, "sweeper: waking up to clean expired keys\n");
+        while(pthread_rwlock_trywrlock(&table->rwlock) != 0){
+            //fprintf(stderr, "sweeper: write lock busy, retrying...\n");
+        }
+        //fprintf(stderr, "sweeper: got write lock\n");
+        time_t now = time(NULL);
+        for(int i = 0; i < table->num_buckets; i++){
+            curr = table->buckets[i];
+            prev = NULL;
+            while(curr != NULL){
+                if(curr->expire_at != 0 && curr->expire_at <= now){
+                    dead = curr;
+                    curr = curr->next;
+                    if(prev){
+                        prev->next = curr;
+                    } else {
+                        table->buckets[i] = curr;
+                    }
+                    //printf("sweeper: removing expired key %s\n", dead->key);
+                    free(dead);
+                    atomic_fetch_add(&table->stats->dels, 1);
+                    atomic_fetch_sub(&table->stats->keys, 1);
+                } else {
+                    prev = curr;
+                    curr = curr->next;
+                }
+            }
+            
+        }
+        pthread_rwlock_unlock(&table->rwlock);
+        //fprintf(stderr, "sweeper: released write lock\n");
     }
     return NULL;
 }
@@ -289,6 +335,15 @@ int main(int argc, char **argv) {
         }
      }
 
+     pthread_t sweeper;
+     sweeper_args_t sweeper_args;
+     sweeper_args.table = server_table;
+     sweeper_args.sweeper_ms = sweeper_ms;
+     if(pthread_create(&sweeper, NULL, sweeper_main, &sweeper_args) != 0){
+        perror("pthread_create for sweeper");
+        return 1;
+     }
+
      while(!g_shutdown) {
         int conn = accept(listen_fd, NULL, NULL);
         if (conn < 0){
@@ -302,21 +357,23 @@ int main(int argc, char **argv) {
         worker_enqueue(queue, conn);
     }
 
-    fprintf(stderr, "main: exited accept loop\n");
+    //fprintf(stderr, "main: exited accept loop\n");
 
     for(int i = 0; i < num_workers; i++){
         worker_enqueue(queue, -1);
     }
 
 
-    fprintf(stderr, "main: broadcast sent\n");
+    //fprintf(stderr, "main: broadcast sent\n");
 
    
     for(int i = 0; i < num_workers; i++){
-        fprintf(stderr, "main: joining worker %d\n", i);
+        //fprintf(stderr, "main: joining worker %d\n", i);
         pthread_join(workers[i], NULL);
-        fprintf(stderr, "main: worker %d joined\n", i);
+        //fprintf(stderr, "main: worker %d joined\n", i);
     }
+
+    pthread_join(sweeper, NULL);
 
 
     close(listen_fd);

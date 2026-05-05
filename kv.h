@@ -85,6 +85,10 @@ typedef struct worker_args {
     work_queue_t *queue;
 } worker_args_t;
 
+typedef struct sweeper_args {
+    kv_table_t *table;
+    int sweeper_ms;
+} sweeper_args_t;
 
 /* -------- Function prototypes you will likely want ---------------------- */
 

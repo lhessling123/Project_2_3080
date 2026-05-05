@@ -35,7 +35,6 @@ kv_table_t *kv_init(int num_buckets) {
 
 int kv_put(kv_table_t *table, const char *key, const char *val,
            int ttl_seconds) {
-  (void)ttl_seconds; // TTL is ignored in this implementation
   unsigned int bucket = hash(key, table->num_buckets);
   kv_entry_t *curr = table->buckets[bucket];
 
@@ -45,6 +44,7 @@ int kv_put(kv_table_t *table, const char *key, const char *val,
     if (strcmp(curr->key, key) == 0) {
       strncpy(curr->value, val, MAX_VAL_LEN - 1);
       curr->value[MAX_VAL_LEN - 1] = '\0';
+      curr->expire_at = (ttl_seconds > 0) ? time(NULL) + ttl_seconds : 0; 
       return 0;
     }
     curr = curr->next;
@@ -58,6 +58,7 @@ int kv_put(kv_table_t *table, const char *key, const char *val,
   new_entry->key[MAX_KEY_LEN - 1] = '\0';
   strncpy(new_entry->value, val, MAX_VAL_LEN - 1);
   new_entry->value[MAX_VAL_LEN - 1] = '\0';
+  new_entry->expire_at = (ttl_seconds > 0) ? time(NULL) + ttl_seconds : 0;
   new_entry->next = table->buckets[bucket];
   table->buckets[bucket] = new_entry;
   atomic_fetch_add(&table->stats->keys, 1);
@@ -68,7 +69,7 @@ int kv_get(kv_table_t *table, const char *key, char *out_val) {
   unsigned int bucket = hash(key, table->num_buckets);
   kv_entry_t *curr = table->buckets[bucket];
   while (curr != NULL) {
-    if (strcmp(curr->key, key) == 0) {
+    if (strcmp(curr->key, key) == 0 && (curr->expire_at == 0 || curr->expire_at > time(NULL))) {
       strncpy(out_val, curr->value, MAX_VAL_LEN);
       atomic_fetch_add(&table->stats->hits, 1);
       return 0;

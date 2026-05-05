@@ -101,7 +101,7 @@ void* client_thread(void *arg) {
         if(is_get){
             sprintf(buf, "GET key%d\n", key_id);
         }else{
-            sprintf(buf, "PUT key%d value%d\n", key_id, key_id);
+            sprintf(buf, "PUT key%d value%d 30\n", key_id, key_id);
         }
         sent = write(sockfd, buf, strlen(buf));
         if (sent < 0){
